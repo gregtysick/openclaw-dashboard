@@ -111,7 +111,7 @@ Visit `http://localhost:7000` in your browser. On first visit, you'll see a **re
    export DASHBOARD_PORT=7000
    export WORKSPACE_DIR=/path/to/your/workspace
    export OPENCLAW_DIR=$HOME/.openclaw
-   export OPENCLAW_AGENT=main
+   export OPENCLAW_AGENT=all
    ```
 
 3. **Start the server**
@@ -189,7 +189,7 @@ docker run -d \
 | `DASHBOARD_TOKEN` | Recovery token for password reset | Auto-generated on startup |
 | `WORKSPACE_DIR` | OpenClaw workspace path | `$OPENCLAW_WORKSPACE` or current directory |
 | `OPENCLAW_DIR` | OpenClaw config directory | `~/.openclaw` |
-| `OPENCLAW_AGENT` | Agent ID to monitor | `main` |
+| `OPENCLAW_AGENT` | Agent selector to monitor (`all`, one agent id, or comma-separated list) | `all` |
 | `DASHBOARD_ALLOW_HTTP` | Allow HTTP from non-local IPs | `false` |
 
 **Examples:**
@@ -565,7 +565,7 @@ The dashboard stores data in your workspace directory:
 ## 🔗 OpenClaw Integration
 
 The dashboard automatically detects:
-- **Sessions** from `$OPENCLAW_DIR/agents/$AGENT_ID/sessions/`
+- **Sessions** from `$OPENCLAW_DIR/agents/<agent>/sessions/` across all detected agents by default
 - **Cron jobs** from `$OPENCLAW_DIR/cron/jobs.json`
 - **Memory files** from `$WORKSPACE_DIR/MEMORY.md`, `HEARTBEAT.md`, and `memory/*.md`
 - **Git repos** from `$WORKSPACE_DIR/projects/*/`

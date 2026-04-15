@@ -8,8 +8,7 @@ const crypto = require('crypto');
 const PORT = parseInt(process.env.DASHBOARD_PORT || '7000');
 const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(os.homedir(), '.openclaw');
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.env.OPENCLAW_WORKSPACE || process.cwd();
-const AGENT_ID = process.env.OPENCLAW_AGENT || 'main';
-const sessDir = path.join(OPENCLAW_DIR, 'agents', AGENT_ID, 'sessions');
+const AGENT_ID = process.env.OPENCLAW_AGENT || 'all';
 const cronFile = path.join(OPENCLAW_DIR, 'cron', 'jobs.json');
 const dataDir = path.join(WORKSPACE_DIR, 'data');
 const memoryDir = path.join(WORKSPACE_DIR, 'memory');
@@ -456,9 +455,70 @@ function resolveName(key) {
   return key.split(':').pop().substring(0, 12);
 }
 
+function getConfiguredAgentIds() {
+  if (AGENT_ID && AGENT_ID !== 'all') {
+    return AGENT_ID.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  try {
+    const agentsRoot = path.join(OPENCLAW_DIR, 'agents');
+    return fs.readdirSync(agentsRoot)
+      .filter(name => fs.existsSync(path.join(agentsRoot, name, 'sessions')))
+      .sort();
+  } catch {
+    return ['main'];
+  }
+}
+
+function getSessionRoots() {
+  return getConfiguredAgentIds().map(agentId => ({
+    agentId,
+    dir: path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions')
+  })).filter(root => fs.existsSync(root.dir));
+}
+
+function getSessionFiles() {
+  const files = [];
+  for (const root of getSessionRoots()) {
+    try {
+      for (const file of fs.readdirSync(root.dir).filter(f => isSessionFile(f))) {
+        files.push({ ...root, file, path: path.join(root.dir, file) });
+      }
+    } catch {}
+  }
+  return files;
+}
+
+function getSessionIndexEntries() {
+  const entries = [];
+  for (const root of getSessionRoots()) {
+    try {
+      const sFile = path.join(root.dir, 'sessions.json');
+      const data = JSON.parse(fs.readFileSync(sFile, 'utf8'));
+      for (const [key, value] of Object.entries(data)) {
+        entries.push({ agentId: root.agentId, dir: root.dir, key, value });
+      }
+    } catch {}
+  }
+  return entries;
+}
+
+function findSessionFilePath(sessionId) {
+  const safeId = String(sessionId || '');
+  for (const entry of getSessionFiles()) {
+    if (entry.file.includes(safeId)) return entry.path;
+  }
+  for (const entry of getSessionIndexEntries()) {
+    if (entry.key === safeId && entry.value && entry.value.sessionId) {
+      const candidate = path.join(entry.dir, entry.value.sessionId + '.jsonl');
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
 function getLastMessage(sessionId) {
   try {
-    const filePath = path.join(sessDir, sessionId + '.jsonl');
+    const filePath = findSessionFilePath(sessionId);
     if (!fs.existsSync(filePath)) return '';
     const data = fs.readFileSync(filePath, 'utf8');
     const lines = data.split('\n').filter(l => l.trim());
@@ -497,11 +557,11 @@ function getSessionCost(sessionId) {
     sessionCostCache = {};
     sessionCostCacheTime = now;
     try {
-      const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
-      for (const file of files) {
-        const sid = extractSessionId(file);
+      const files = getSessionFiles();
+      for (const entry of files) {
+        const sid = extractSessionId(entry.file);
         let total = 0;
-        const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+        const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
@@ -520,10 +580,9 @@ function getSessionCost(sessionId) {
 
 function getSessionsJson() {
   try {
-    const sFile = path.join(sessDir, 'sessions.json');
-    const data = JSON.parse(fs.readFileSync(sFile, 'utf8'));
-    return Object.entries(data).map(([key, s]) => ({
+    return getSessionIndexEntries().map(({ agentId, key, value: s }) => ({
       key,
+      agentId,
       label: s.label || resolveName(key),
       model: s.modelOverride || s.model || '-',
       totalTokens: s.totalTokens || 0,
@@ -543,16 +602,16 @@ function getSessionsJson() {
 
 function getCostData() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
+    const files = getSessionFiles();
     const perModel = {};
     const perDay = {};
     const perSession = {};
     let total = 0;
 
-    for (const file of files) {
-      const sid = extractSessionId(file);
+    for (const entry of files) {
+      const sid = extractSessionId(entry.file);
       let scost = 0;
-      const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+      const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -594,8 +653,7 @@ function getCostData() {
       perSession: (() => {
         let sidLabels = {};
         try {
-          const sData = JSON.parse(fs.readFileSync(path.join(sessDir, 'sessions.json'), 'utf8'));
-          for (const [key, val] of Object.entries(sData)) {
+          for (const { key, value: val } of getSessionIndexEntries()) {
             if (val.sessionId) sidLabels[val.sessionId] = val.label || key.split(':').slice(2).join(':');
           }
         } catch {}
@@ -604,9 +662,9 @@ function getCostData() {
             let label = sidLabels[sid] || null;
             if (!label) {
               try {
-                const jf = path.join(sessDir, sid + '.jsonl');
+                const jf = findSessionFilePath(sid);
                 if (!fs.existsSync(jf)) {
-                  const del = fs.readdirSync(sessDir).find(f => f.startsWith(sid) && f.includes('.deleted'));
+                  const del = getSessionFiles().find(f => f.file.startsWith(sid) && f.file.includes('.deleted'));
                   if (del) { }
                 }
                 if (fs.existsSync(jf)) {
@@ -661,17 +719,17 @@ function getUsageWindows() {
     const now = Date.now();
     const fiveHoursMs = 5 * 3600000;
     const oneWeekMs = 7 * 86400000;
-    const files = fs.readdirSync(sessDir).filter(f => {
-      if (!f.endsWith('.jsonl')) return false;
-      try { return fs.statSync(path.join(sessDir, f)).mtimeMs > now - oneWeekMs; } catch { return false; }
+    const files = getSessionFiles().filter(entry => {
+      if (!entry.file.endsWith('.jsonl')) return false;
+      try { return fs.statSync(entry.path).mtimeMs > now - oneWeekMs; } catch { return false; }
     });
 
     const perModel5h = {};
     const perModelWeek = {};
     const recentMessages = [];
 
-    for (const file of files) {
-      const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+    for (const entry of files) {
+      const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -806,13 +864,13 @@ function getUsageWindows() {
 
 function getRateLimitEvents() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
+    const files = getSessionFiles();
     const events = [];
     const now = Date.now();
     const fiveHoursMs = 5 * 3600000;
 
-    for (const file of files) {
-      const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+    for (const entry of files) {
+      const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -984,31 +1042,32 @@ function getSystemStats() {
 }
 
 let liveClients = [];
-let liveWatcher = null;
+const _dirWatchers = {};
 const _fileWatchers = {};
 const _fileSizes = {};
 
-function watchSessionFile(file) {
-  const filePath = path.join(sessDir, file);
-  const sessionKey = file.replace('.jsonl', '');
-  if (_fileWatchers[file]) return;
+function watchSessionFile(entry) {
+  const fileKey = `${entry.agentId}:${entry.file}`;
+  const filePath = entry.path;
+  const sessionKey = entry.file.replace('.jsonl', '');
+  if (_fileWatchers[fileKey]) return;
   try {
-    _fileSizes[file] = fs.statSync(filePath).size;
-  } catch { _fileSizes[file] = 0; }
-  
+    _fileSizes[fileKey] = fs.statSync(filePath).size;
+  } catch { _fileSizes[fileKey] = 0; }
+
   try {
-    _fileWatchers[file] = fs.watch(filePath, (eventType) => {
+    _fileWatchers[fileKey] = fs.watch(filePath, (eventType) => {
       if (eventType !== 'change') return;
       try {
         const stats = fs.statSync(filePath);
-        if (stats.size <= (_fileSizes[file] || 0)) return;
+        if (stats.size <= (_fileSizes[fileKey] || 0)) return;
         const fd = fs.openSync(filePath, 'r');
-        const buffer = Buffer.allocUnsafe(stats.size - (_fileSizes[file] || 0));
-        fs.readSync(fd, buffer, 0, buffer.length, _fileSizes[file] || 0);
+        const buffer = Buffer.allocUnsafe(stats.size - (_fileSizes[fileKey] || 0));
+        fs.readSync(fd, buffer, 0, buffer.length, _fileSizes[fileKey] || 0);
         fs.closeSync(fd);
-        _fileSizes[file] = stats.size;
+        _fileSizes[fileKey] = stats.size;
         buffer.toString('utf8').split('\n').filter(l => l.trim()).forEach(line => {
-          try { const data = JSON.parse(line); data._sessionKey = sessionKey; broadcastLiveEvent(data); } catch {}
+          try { const data = JSON.parse(line); data._sessionKey = sessionKey; data._agentId = entry.agentId; broadcastLiveEvent(data); } catch {}
         });
       } catch {}
     });
@@ -1016,15 +1075,17 @@ function watchSessionFile(file) {
 }
 
 function startLiveWatcher() {
-  if (liveWatcher) return;
-  try {
-    fs.readdirSync(sessDir).filter(f => isSessionFile(f)).forEach(watchSessionFile);
-    liveWatcher = fs.watch(sessDir, (eventType, filename) => {
-      if (filename && isSessionFile(filename) && !_fileWatchers[filename]) {
-        try { if (fs.existsSync(path.join(sessDir, filename))) watchSessionFile(filename); } catch {}
-      }
-    });
-  } catch {}
+  for (const root of getSessionRoots()) {
+    if (_dirWatchers[root.dir]) continue;
+    try {
+      getSessionFiles().filter(entry => entry.dir === root.dir).forEach(watchSessionFile);
+      _dirWatchers[root.dir] = fs.watch(root.dir, (eventType, filename) => {
+        if (!filename || !isSessionFile(filename)) return;
+        const entry = { agentId: root.agentId, dir: root.dir, file: filename, path: path.join(root.dir, filename) };
+        try { if (fs.existsSync(entry.path)) watchSessionFile(entry); } catch {}
+      });
+    } catch {}
+  }
 }
 
 function broadcastLiveEvent(data) {
@@ -1355,14 +1416,14 @@ function buildKeyFilesAllowed() {
 
 function getTodayTokens() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
+    const files = getSessionFiles();
     const now = new Date();
     const todayStr = now.toISOString().substring(0, 10);
     const perModel = {};
     let totalInput = 0, totalOutput = 0;
 
-    for (const file of files) {
-      const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+    for (const entry of files) {
+      const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -1390,13 +1451,13 @@ function getTodayTokens() {
 
 function getAvgResponseTime() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
+    const files = getSessionFiles();
     const now = new Date();
     const todayStr = now.toISOString().substring(0, 10);
     const diffs = [];
 
-    for (const file of files) {
-      const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+    for (const entry of files) {
+      const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
       let lastUserTs = null;
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -1909,20 +1970,9 @@ const server = http.createServer((req, res) => {
       const sessionId = rawId.replace(/[^a-zA-Z0-9\-_:.]/g, '');
       const messages = [];
       try {
-        const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
-        let targetFile = files.find(f => f.includes(sessionId));
-        if (!targetFile) {
-          const sFile = path.join(sessDir, 'sessions.json');
-          const data = JSON.parse(fs.readFileSync(sFile, 'utf8'));
-          for (const [k, v] of Object.entries(data)) {
-            if (k === sessionId && v.sessionId) {
-              targetFile = files.find(f => f.includes(v.sessionId));
-              break;
-            }
-          }
-        }
+        const targetFile = findSessionFilePath(sessionId);
         if (targetFile) {
-          const lines = fs.readFileSync(path.join(sessDir, targetFile), 'utf8').split('\n').filter(l => l.trim());
+          const lines = fs.readFileSync(targetFile, 'utf8').split('\n').filter(l => l.trim());
           for (let i = Math.max(0, lines.length - 30); i < lines.length; i++) {
             try {
               const d = JSON.parse(lines[i]);
@@ -2378,12 +2428,12 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify(global[cacheKey]));
           return;
         }
-        const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
+        const files = getSessionFiles();
         let totalTokens = 0, totalMessages = 0, totalCost = 0, totalSessions = files.length;
         let firstSessionDate = null;
         const activeDays = new Set();
-        for (const file of files) {
-          const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+        for (const entry of files) {
+          const lines = fs.readFileSync(entry.path, 'utf8').split('\n');
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
@@ -2582,19 +2632,20 @@ const server = http.createServer((req, res) => {
       
       try {
         const cutoff = Date.now() - 3600000;
-        const files = fs.readdirSync(sessDir).filter(f => {
-          if (!f.endsWith('.jsonl')) return false;
-          try { return fs.statSync(path.join(sessDir, f)).mtimeMs > cutoff; } catch { return false; }
+        const files = getSessionFiles().filter(entry => {
+          if (!entry.file.endsWith('.jsonl')) return false;
+          try { return fs.statSync(entry.path).mtimeMs > cutoff; } catch { return false; }
         });
         const recentEvents = [];
-        files.forEach(file => {
-          const sessionKey = file.replace('.jsonl', '');
-          const content = fs.readFileSync(path.join(sessDir, file), 'utf8');
+        files.forEach(entry => {
+          const sessionKey = entry.file.replace('.jsonl', '');
+          const content = fs.readFileSync(entry.path, 'utf8');
           const lines = content.split('\n').filter(l => l.trim());
           lines.slice(-5).forEach(line => {
             try {
               const data = JSON.parse(line);
               data._sessionKey = sessionKey;
+              data._agentId = entry.agentId;
               const event = formatLiveEvent(data);
               if (event) recentEvents.push(event);
             } catch {}
