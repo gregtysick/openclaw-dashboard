@@ -6,7 +6,11 @@
 [![Node.js](https://img.shields.io/badge/Node.js-v18+-green.svg)](https://nodejs.org/)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-Compatible-purple.svg)](https://openclaw.dev)
 
-A beautiful, secure, real-time monitoring dashboard for OpenClaw agents. Track sessions, monitor API usage, view costs, manage memory files, and keep tabs on system health — all in one place.
+A secure, real-time monitoring dashboard for OpenClaw agents. Track sessions, monitor API usage, review costs, browse memory files, and keep tabs on system health in one place.
+
+**Status:** lightweight self-hosted dashboard for private OpenClaw environments  
+**Best for:** localhost, Tailscale, and trusted operator workflows  
+**Not intended for:** direct public internet exposure without additional hardening
 
 ![Dashboard Preview](docs/screenshot.png)
 
@@ -64,8 +68,8 @@ A beautiful, secure, real-time monitoring dashboard for OpenClaw agents. Track s
 ## 🚀 Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/tugcantopaloglu/openclaw-dashboard.git
+# Clone your fork
+git clone https://github.com/gregtysick/openclaw-dashboard.git
 cd openclaw-dashboard
 
 # Set your OpenClaw workspace path (optional, auto-detects if not set)
@@ -98,7 +102,7 @@ Visit `http://localhost:7000` in your browser. On first visit, you'll see a **re
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/tugcantopaloglu/openclaw-dashboard.git
+   git clone https://github.com/gregtysick/openclaw-dashboard.git
    cd openclaw-dashboard
    ```
 
@@ -403,10 +407,11 @@ DASHBOARD_ALLOW_HTTP=true node server.js
 
 ### Don't Expose to Public Internet
 
-**This dashboard is NOT hardened for public internet exposure.** While it has authentication and rate limiting, it's designed for private networks. If you must expose it:
+**This dashboard is not meant for direct public internet exposure.** While it has authentication and rate limiting, it is best treated as a private operator dashboard. If you must expose it:
 - Use a reverse proxy (nginx, Caddy) with HTTPS
 - Add IP allowlisting
-- Consider VPN (Tailscale, WireGuard) instead
+- Prefer VPN or tailnet access (Tailscale, WireGuard)
+- Treat public exposure as an advanced deployment, not the default setup
 
 ## 🛠️ Troubleshooting
 
@@ -608,7 +613,7 @@ Contributions are welcome! Please follow these guidelines:
 ### Development Setup
 
 ```bash
-git clone https://github.com/tugcantopaloglu/openclaw-dashboard.git
+git clone https://github.com/gregtysick/openclaw-dashboard.git
 cd openclaw-dashboard
 export WORKSPACE_DIR=/path/to/test/workspace
 node server.js
