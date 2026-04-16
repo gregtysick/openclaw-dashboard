@@ -12,6 +12,17 @@ A secure, real-time monitoring dashboard for OpenClaw agents. Track sessions, mo
 **Best for:** localhost, Tailscale, and trusted operator workflows  
 **Not intended for:** direct public internet exposure without additional hardening
 
+## Fork Notes
+
+This fork builds on the original project by [tugcantopaloglu/openclaw-dashboard](https://github.com/tugcantopaloglu/openclaw-dashboard).
+
+Current fork focus:
+- adapt the dashboard to Greg Tysick's OpenClaw environment
+- improve compatibility with multi-agent OpenClaw layouts
+- document practical operator-facing changes as the fork evolves
+
+Current adaptation work includes support for aggregating sessions across multiple agent roots instead of assuming a single-agent session layout.
+
 ![Dashboard Preview](docs/screenshot.png)
 
 ## 📸 Screenshots
